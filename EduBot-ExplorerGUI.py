@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
+
 """
 Created on Wed Sep 10 15:46:55 2025
 
 @author:  Aula ^__^
 """
+
+# -*- coding: utf-8 -*-
 
 import sys, random, math, socket, json, threading
 from PyQt5.QtWidgets import (
@@ -73,15 +76,16 @@ class RobotConnection:
     def handle_received_message(self, message):
         if message.get('type') == 'sensor_data':
             self.parent.update_real_sensors(message.get('data', {}))
+        elif message.get('type') == 'autonomous_update':
+            self.parent.handle_autonomous_update(message.get('data', {}))
 
 class EduBotExplorer(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("EduBot Explorer - Real Robot Control")
         
-        self.setGeometry(50, 50, 900, 650)  
+        self.setGeometry(50, 50, 900, 650)
         
-        # Initialize robot position and trail
         self.robot_x, self.robot_y = 100, 100
         self.start_x, self.start_y = 100, 100
         self.robot_trail = []
@@ -101,7 +105,6 @@ class EduBotExplorer(QWidget):
         self.draw_map()
 
     def setup_ui(self):
-        # Create control buttons with compact design
         self.controls = {
             "Forward": QPushButton("↑"),
             "Backward": QPushButton("↓"),
@@ -110,13 +113,16 @@ class EduBotExplorer(QWidget):
             "Stop": QPushButton("Stop"),
             "Clear": QPushButton("Clear"),
             "Home": QPushButton("Home"),
-            "Auto": QPushButton("Auto")
+            "Auto": QPushButton("Auto"),
+            "EmergencyStop": QPushButton("Emergency Stop"),
+            "SmartStop": QPushButton("Smart Stop"),
+            "StartAuto": QPushButton("Start Auto"),
+            "StopAuto": QPushButton("Stop Auto"),
+            "GetStatus": QPushButton("Get Status")
         }
         
-        
         for btn in self.controls.values():
-            btn.setFixedSize(60, 35) 
-        
+            btn.setFixedSize(80, 35)
         
         self.controls["Forward"].setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
         self.controls["Backward"].setStyleSheet("background-color: #F44336; color: white; font-weight: bold;")
@@ -126,26 +132,36 @@ class EduBotExplorer(QWidget):
         self.controls["Clear"].setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
         self.controls["Home"].setStyleSheet("background-color: #607D8B; color: white; font-weight: bold;")
         self.controls["Auto"].setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold;")
+        self.controls["EmergencyStop"].setStyleSheet("background-color: #D32F2F; color: white; font-weight: bold;")
+        self.controls["SmartStop"].setStyleSheet("background-color: #FF9800; color: white; font-weight: bold;")
+        self.controls["StartAuto"].setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self.controls["StopAuto"].setStyleSheet("background-color: #F44336; color: white; font-weight: bold;")
+        self.controls["GetStatus"].setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
 
-        
         control_layout = QHBoxLayout()
         control_layout.addWidget(self.controls["Left"])
         control_layout.addWidget(self.controls["Forward"])
         control_layout.addWidget(self.controls["Backward"])
         control_layout.addWidget(self.controls["Right"])
         control_layout.addWidget(self.controls["Stop"])
-        control_layout.setSpacing(3)  
+        control_layout.setSpacing(3)
 
-        
         extra_controls_layout = QHBoxLayout()
         extra_controls_layout.addWidget(self.controls["Clear"])
         extra_controls_layout.addWidget(self.controls["Home"])
         extra_controls_layout.addWidget(self.controls["Auto"])
         extra_controls_layout.setSpacing(3)
         
+        advanced_controls_layout = QHBoxLayout()
+        advanced_controls_layout.addWidget(self.controls["EmergencyStop"])
+        advanced_controls_layout.addWidget(self.controls["SmartStop"])
+        advanced_controls_layout.addWidget(self.controls["StartAuto"])
+        advanced_controls_layout.addWidget(self.controls["StopAuto"])
+        advanced_controls_layout.addWidget(self.controls["GetStatus"])
+        advanced_controls_layout.setSpacing(3)
         
         connection_group = QGroupBox("Connection")
-        connection_group.setMaximumHeight(100)  
+        connection_group.setMaximumHeight(100)
         connection_layout = QGridLayout()
         
         self.host_input = QLineEdit("192.168.1.100")
@@ -176,7 +192,6 @@ class EduBotExplorer(QWidget):
         
         connection_group.setLayout(connection_layout)
         
-        
         autonomous_group = QGroupBox("Autonomous")
         autonomous_group.setMaximumHeight(80)
         autonomous_layout = QVBoxLayout()
@@ -197,52 +212,45 @@ class EduBotExplorer(QWidget):
         autonomous_layout.addWidget(self.target_label)
         autonomous_group.setLayout(autonomous_layout)
 
-        
         self.sensor_label = QLabel("Distance: -- cm | Temp: -- °C")
         self.sensor_label.setMaximumHeight(20)
         self.sensor_label.setStyleSheet("font-size: 11px; background-color: #E1F5FE;")
 
-        
         self.battery_bar = QProgressBar()
         self.battery_bar.setValue(100)
         self.battery_bar.setFormat("Battery: %p%")
         self.battery_bar.setMaximumHeight(18)
         self.battery_bar.setStyleSheet("QProgressBar { height: 15px; font-size: 10px; }")
 
-    
-        self.scene = QGraphicsScene(0, 0, 350, 200)  
+        self.scene = QGraphicsScene(0, 0, 350, 200)
         self.map_view = QGraphicsView(self.scene)
-        self.map_view.setFixedHeight(200)  
+        self.map_view.setFixedHeight(200)
         self.map_view.setFrameShape(QFrame.Box)
         self.map_view.setStyleSheet("background-color: #F5F5F5;")
         self.map_view.setSceneRect(0, 0, 350, 200)
         self.map_view.mousePressEvent = self.map_clicked
 
-        
-        self.robot_item = QGraphicsEllipseItem(0, 0, 15, 15)  # تصغير حجم الروبوت
+        self.robot_item = QGraphicsEllipseItem(0, 0, 15, 15)
         self.robot_item.setBrush(QBrush(QColor("#FF5722")))
         self.robot_item.setPen(QPen(Qt.black, 1))
         self.scene.addItem(self.robot_item)
         self.robot_item.setPos(self.robot_x, self.robot_y)
 
-        
         self.position_label = QLabel("Position: (100, 100)")
         self.position_label.setMaximumHeight(18)
         self.position_label.setStyleSheet("font-size: 10px; background-color: #FFF9C4;")
 
-        
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.setPlaceholderText("Command log...")
-        self.log.setMaximumHeight(80)  
+        self.log.setMaximumHeight(80)
         self.log.setStyleSheet("font-size: 9px;")
 
-        
         layout = QVBoxLayout()
         layout.addWidget(connection_group)
         layout.addLayout(control_layout)
         layout.addLayout(extra_controls_layout)
-        
+        layout.addLayout(advanced_controls_layout)
         
         compact_layout = QHBoxLayout()
         compact_layout.addWidget(autonomous_group)
@@ -256,16 +264,14 @@ class EduBotExplorer(QWidget):
         layout.addWidget(QLabel("Command Log"))
         layout.addWidget(self.log)
         
-        
         layout.setSpacing(5)
         layout.setContentsMargins(8, 8, 8, 8)
         self.setLayout(layout)
         
-        self.setStyleSheet("font-size: 11px;")  
+        self.setStyleSheet("font-size: 11px;")
 
     def draw_map(self):
-        
-        for x in range(0, 350, 15):  
+        for x in range(0, 350, 15):
             line = QGraphicsLineItem(x, 0, x, 200)
             line.setPen(QPen(QColor("#E0E0E0"), 0.5))
             self.scene.addItem(line)
@@ -275,11 +281,9 @@ class EduBotExplorer(QWidget):
             line.setPen(QPen(QColor("#E0E0E0"), 0.5))
             self.scene.addItem(line)
         
-        
         border = QGraphicsRectItem(0, 0, 350, 200)
         border.setPen(QPen(Qt.black, 2))
         self.scene.addItem(border)
-        
         
         obstacle_positions = [
             (40, 40, 25, 25), (150, 60, 30, 15), 
@@ -304,6 +308,12 @@ class EduBotExplorer(QWidget):
         self.controls["Auto"].clicked.connect(self.auto_move_random)
         self.autonomous_check.stateChanged.connect(self.toggle_autonomous_mode)
         self.target_btn.clicked.connect(self.enable_target_selection)
+        
+        self.controls["EmergencyStop"].clicked.connect(self.emergency_stop_robot)
+        self.controls["SmartStop"].clicked.connect(self.smart_stop_robot)
+        self.controls["StartAuto"].clicked.connect(self.start_autonomous_navigation)
+        self.controls["StopAuto"].clicked.connect(self.stop_autonomous_navigation)
+        self.controls["GetStatus"].clicked.connect(self.get_robot_status)
         
         self.connect_btn.clicked.connect(self.connect_to_robot)
         self.disconnect_btn.clicked.connect(self.disconnect_from_robot)
@@ -349,7 +359,7 @@ class EduBotExplorer(QWidget):
             self.scene.removeItem(self.target_item)
         
         self.target_x, self.target_y = x, y
-        self.target_item = QGraphicsEllipseItem(x-10, y-10, 20, 20) 
+        self.target_item = QGraphicsEllipseItem(x-10, y-10, 20, 20)
         self.target_item.setBrush(QBrush(QColor("#FF0000")))
         self.target_item.setPen(QPen(Qt.black, 1))
         self.target_item.setZValue(10)
@@ -422,6 +432,44 @@ class EduBotExplorer(QWidget):
             self.robot_connection.send_command('stop')
         
         self.send_command("Emergency Stop")
+
+    def emergency_stop_robot(self):
+        if self.robot_connection.connected:
+            self.robot_connection.send_command('emergency_stop')
+        self.log.append("Emergency Stop executed")
+
+    def smart_stop_robot(self):
+        if self.robot_connection.connected:
+            self.robot_connection.send_command('smart_stop')
+        self.log.append("Smart Stop executed")
+
+    def start_autonomous_navigation(self):
+        if self.robot_connection.connected:
+            target_data = {
+                'target_x': self.target_x,
+                'target_y': self.target_y
+            }
+            self.robot_connection.send_command('start_autonomous', target_data)
+        self.log.append("Autonomous navigation started")
+
+    def stop_autonomous_navigation(self):
+        if self.robot_connection.connected:
+            self.robot_connection.send_command('stop_autonomous')
+        self.log.append("Autonomous navigation stopped")
+
+    def get_robot_status(self):
+        if self.robot_connection.connected:
+            self.robot_connection.send_command('get_status')
+        self.log.append("Requesting robot status")
+
+    def handle_autonomous_update(self, data):
+        sensor_data = data.get('sensor_data', {})
+        obstacle_detected = data.get('obstacle_detected', False)
+        
+        self.update_real_sensors(sensor_data)
+        
+        if obstacle_detected:
+            self.log.append("Obstacle detected and avoided")
 
     def clear_map(self):
         for line in self.trail_lines:
