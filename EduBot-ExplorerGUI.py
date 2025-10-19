@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 
 """
-Created on Wed Sep 10 15:46:55 2025
+Created on Sunday October 19 15:46:55 2025
 
-@author:  Aula ^__^
+@author:  luckyone0701 ^__^
 """
 
 # -*- coding: utf-8 -*-
